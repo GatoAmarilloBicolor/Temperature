@@ -4,7 +4,7 @@
 const char *kTemperaturePath = "/dev/power/acpi_thermal/0";
 
 App::App(void)
-	:	BApplication("application/x-vnd.dw-TestApp")
+	:	BApplication("application/x-vnd.Loa-Temperature")
 {
 	MainWindow *mainwin = new MainWindow();
 	mainwin->Show();

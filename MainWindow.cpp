@@ -5,6 +5,7 @@
 #include <View.h>
 #include <Button.h>
 #include <String.h>
+#include <Catalog.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -18,9 +19,11 @@
 #include <StringView.h>
 #include <stdio.h>
 
+#undef B_TRANSLATION_CONTEXT
+#define B_TRANSLATION_CONTEXT "Main window"
 
 MainWindow::MainWindow(void)
-	:	BWindow(BRect(100,100,500,400),"Temperature",B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS)
+	:	BWindow(BRect(100,100,500,400),B_TRANSLATE_SYSTEM_NAME("Temperature"),B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS)
 {
 	BRect r(Bounds());
 	r.bottom = 20;
@@ -33,28 +36,28 @@ MainWindow::MainWindow(void)
     view->SetViewColor(ui_color(B_PANEL_BACKGROUND_COLOR));
 //
     BRect rect(10,0,280,50);
-    fLabel = new BStringView(rect, "label", "Temperatura: N/A");
+    fLabel = new BStringView(rect, "label", B_TRANSLATE("Temperature: N/A"));
     view->AddChild(fLabel);
 
     rect.OffsetBy(0,50);
-    fButton = new BButton(rect, "button", "Actualizar", new BMessage('u'));
+    fButton = new BButton(rect, "button", B_TRANSLATE("Refresh"), new BMessage('u'));
     view->AddChild(fButton);
     
     //Experimental
     
     
-    criticalTempControl = new BTextControl(BRect(10, 100, 180, 30), "critical_temp", "Critical Temperature:", NULL, NULL);
+    criticalTempControl = new BTextControl(BRect(10, 100, 180, 30), "critical_temp", B_TRANSLATE("Critical Temperature:"), NULL, NULL);
 	criticalTempControl->SetModificationMessage(new BMessage(B_MODIFIERS_CHANGED));
 	view->AddChild(criticalTempControl);
 
-	currentTempControl = new BTextControl(BRect(10, 120, 180, 60), "current_temp", "Current Temperature:", NULL, NULL);
+	currentTempControl = new BTextControl(BRect(10, 120, 180, 60), "current_temp", B_TRANSLATE("Current Temperature:"), NULL, NULL);
 	currentTempControl->SetModificationMessage(new BMessage(B_MODIFIERS_CHANGED));
 	view->AddChild(currentTempControl);
 
-	celsiusButton = new BButton(BRect(10, 180, 90, 90), "celsius", "Celsius", new BMessage(B_MODIFIERS_CHANGED));
+	celsiusButton = new BButton(BRect(10, 180, 90, 90), "celsius", B_TRANSLATE("Celsius"), new BMessage(B_MODIFIERS_CHANGED));
 	view->AddChild(celsiusButton);
 
-	kelvinButton = new BButton(BRect(100, 180, 180, 90), "kelvin", "Kelvin", new BMessage('k'));
+	kelvinButton = new BButton(BRect(100, 180, 180, 90), "kelvin", B_TRANSLATE("Kelvin"), new BMessage('k'));
 	view->AddChild(kelvinButton);
 
 	showCelsius = 0;
@@ -74,7 +77,7 @@ void MainWindow::MessageReceived(BMessage *msg)
           if (ReadTemperature(temperature, sizeof(temperature))) 
           {
             
-            BString label("Temperatura:\n ");
+            BString label("Temperature:\n ");
             
             // SSCANF()
             float critical_temp;
