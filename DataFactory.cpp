@@ -4,6 +4,7 @@
  */
 #include <Directory.h>
 #include <Entry.h>
+#include <InterfaceDefs.h>
 #include <Path.h>
 #include <StringList.h>
 #include <SupportDefs.h>
@@ -13,10 +14,12 @@
 
 DataFactory::DataFactory()
 : BArchivable(),
+  fStandaloneMode(false),
   fWindowRect(BRect(100,100,500,400)),
   fActiveDevice(""),
   fSecondsToRefresh(1),
   fGraphWatermarkShown(true),
+  fGraphLineColor(ui_color(B_FAILURE_COLOR)),
   fGraphRunningStatus(true),
   fTemperatureScale(SCALE_CELSIUS)
 {
@@ -24,12 +27,14 @@ DataFactory::DataFactory()
 }
 
 DataFactory::DataFactory(BMessage* from)
-: BArchivable(from)
+: BArchivable(from),
+  fStandaloneMode(false)
 {
 	fWindowRect = from->GetRect(kConfigWndFrame, BRect(100,100,500,400));
 	fActiveDevice = from->GetString(kConfigDevicePath, "");
 	fSecondsToRefresh = from->GetUInt32(kConfigWndPulse, 1);
 	fGraphWatermarkShown = from->GetBool(kConfigGraphWMark, true);
+	fGraphLineColor = from->GetColor(kConfigGraphLColor, ui_color(B_FAILURE_COLOR));
 	fGraphRunningStatus = from->GetBool(kConfigGraphRun, true);
 	const void* ptr = NULL;
 	ssize_t length = 0;
@@ -47,10 +52,12 @@ DataFactory::DataFactory(BMessage* from)
 }
 
 DataFactory::DataFactory(const DataFactory& other)
-: fWindowRect(other.fWindowRect),
+: fStandaloneMode(other.fStandaloneMode),
+  fWindowRect(other.fWindowRect),
   fActiveDevice(other.fActiveDevice),
   fSecondsToRefresh(other.fSecondsToRefresh),
   fGraphWatermarkShown(other.fGraphWatermarkShown),
+  fGraphLineColor(other.fGraphLineColor),
   fGraphRunningStatus(other.fGraphRunningStatus),
   fTemperatureScale(other.fTemperatureScale)
 {
@@ -83,6 +90,8 @@ status_t DataFactory::Archive(BMessage* into, bool deep) const
 		into->AddUInt32(kConfigWndPulse, fSecondsToRefresh);
 	if(into->ReplaceBool(kConfigGraphWMark, fGraphWatermarkShown) != B_OK)
 		into->AddBool(kConfigGraphWMark, fGraphWatermarkShown);
+	if(into->ReplaceColor(kConfigGraphLColor, fGraphLineColor) != B_OK)
+		into->AddColor(kConfigGraphLColor, fGraphLineColor);
 	if(into->ReplaceBool(kConfigGraphRun, fGraphRunningStatus) != B_OK)
 		into->AddBool(kConfigGraphRun, fGraphRunningStatus);
 	if(into->ReplaceData(kConfigTempScale, B_CHAR_TYPE, &fTemperatureScale, sizeof(char)) != B_OK)
@@ -93,22 +102,30 @@ status_t DataFactory::Archive(BMessage* into, bool deep) const
 
 status_t DataFactory::Perform(perform_code opcode, void* argument)
 {
-	if(static_cast<uint32>(opcode) == M_RESTORE_DEFAULTS) {
-		BMessage defaults;
-		DataFactory::DefaultSettings(&defaults);
-		SetActiveDevice(defaults.GetString(kConfigDevicePath));
-		SetRefreshRate(defaults.GetUInt32(kConfigWndPulse, 1));
-		SetWatermarkVisibility(defaults.GetBool(kConfigGraphWMark));
-		SetRunningStatus(defaults.GetBool(kConfigGraphRun));
-		const void* ptr = NULL;
-		ssize_t length = 0;
-		defaults.FindData(kConfigTempScale, B_CHAR_TYPE, &ptr, &length);
-		char c = *(static_cast<const char*>(ptr));
-		SetTemperatureScale(c);
-		return B_OK;
+	switch(static_cast<uint32>(opcode))
+	{
+		case M_RESTORE_DEFAULTS:
+		{
+			if(fStandaloneMode)
+				return B_NOT_ALLOWED;
+
+			BMessage defaults;
+			DataFactory::DefaultSettings(&defaults);
+			SetActiveDevice(fDevicesList.StringAt(0).String());
+			SetRefreshRate(defaults.GetUInt32(kConfigWndPulse, 1));
+			SetWatermarkVisibility(defaults.GetBool(kConfigGraphWMark));
+			SetLineColor(defaults.GetColor(kConfigGraphLColor, ui_color(B_FAILURE_COLOR)));
+			SetRunningStatus(defaults.GetBool(kConfigGraphRun));
+			const void* ptr = NULL;
+			ssize_t length = 0;
+			defaults.FindData(kConfigTempScale, B_CHAR_TYPE, &ptr, &length);
+			char c = *(static_cast<const char*>(ptr));
+			SetTemperatureScale(c);
+			return B_OK;
+		}
+		default:
+			return BArchivable::Perform(opcode, argument);
 	}
-	else
-		return BArchivable::Perform(opcode, argument);
 }
 
 /* static */
@@ -171,6 +188,7 @@ void DataFactory::DefaultSettings(BMessage* archive)
     archive->AddRect(kConfigWndFrame, BRect(100,100,500,400));
     archive->AddUInt32(kConfigWndPulse, 1);
     archive->AddBool(kConfigGraphRun, true);
+	archive->AddColor(kConfigGraphLColor, ui_color(B_FAILURE_COLOR));
     archive->AddBool(kConfigGraphWMark, true);
 	char scale = SCALE_CELSIUS;
 	archive->AddData(kConfigTempScale, B_CHAR_TYPE, &scale, sizeof(scale));
@@ -214,6 +232,16 @@ void DataFactory::SetWatermarkVisibility(bool state)
 bool DataFactory::WatermarkVisibility() const
 {
 	return fGraphWatermarkShown;
+}
+
+void DataFactory::SetLineColor(rgb_color color)
+{
+	fGraphLineColor = color;
+}
+
+rgb_color DataFactory::LineColor() const
+{
+	return fGraphLineColor;
 }
 
 void DataFactory::SetRunningStatus(bool state)

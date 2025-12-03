@@ -26,7 +26,7 @@ ThermalDevice::~ThermalDevice()
 }
 
 status_t
-ThermalDevice::InitCheck()
+ThermalDevice::InitCheck() const
 {
 	return fFD < 0 ? B_NO_INIT : B_OK;
 }

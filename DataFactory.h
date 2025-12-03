@@ -6,6 +6,7 @@
 #define __DATA_FACTORY__
 
 #include <Archivable.h>
+#include <GraphicsDefs.h>
 #include <String.h>
 #include <StringList.h>
 
@@ -44,11 +45,16 @@ public:
 	void SetWatermarkVisibility(bool state);
 	bool WatermarkVisibility() const;
 
+	void SetLineColor(rgb_color color);
+	rgb_color LineColor() const;
+
 	void SetRunningStatus(bool state);
 	bool RunningStatus() const;
 
 	void SetTemperatureScale(char scale);
 	const char TemperatureScale() const;
+public:
+	bool fStandaloneMode;
 private:
 	BStringList fDevicesList;
 
@@ -56,6 +62,7 @@ private:
 	BString fActiveDevice;
 	uint32 fSecondsToRefresh;
 	bool fGraphWatermarkShown;
+	rgb_color fGraphLineColor;
 	bool fGraphRunningStatus;
 	char fTemperatureScale;
 };

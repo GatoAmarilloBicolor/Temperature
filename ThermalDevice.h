@@ -25,7 +25,7 @@ public:
 						ThermalDevice(const char* path = NULL);
 	virtual 			~ThermalDevice();
 
-	virtual	status_t 	InitCheck();
+	virtual	status_t 	InitCheck() const;
 			status_t 	SetTo(const char* path);
 			void 		Unset();
 			const char* Location() const;

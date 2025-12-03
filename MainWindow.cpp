@@ -21,6 +21,7 @@
 #include <PopUpMenu.h>
 
 #include <cassert>
+#include <cstdio>
 #include <unordered_map>
 
 #undef B_TRANSLATION_CONTEXT
@@ -40,7 +41,9 @@ MainWindow::MainWindow(BRect frame, DataFactory* dataRepo)
 {
 	assert(dataRepository != NULL);
 
-	SetPulseRate(dataRepository->RefreshRate() * 1000000);
+	activeDevice.SetTo(dataRepository->ActiveDevice());
+
+	temperatureGraph = new GraphView(dataRepository);
 
     // Device selector
     devicesField = new BMenuField("devices", B_TRANSLATE("Device"), new BPopUpMenu("", true, true));
@@ -50,15 +53,15 @@ MainWindow::MainWindow(BRect frame, DataFactory* dataRepo)
 		deviceMessage->AddString("target", deviceString);
 		devicesField->Menu()->AddItem(new BMenuItem(deviceString, deviceMessage));
 	}
-	if(devicesField->Menu()->FindItem(dataRepository->ActiveDevice()))
-		devicesField->Menu()->FindItem(dataRepository->ActiveDevice())->SetMarked(true);
+	if(HasDevice() && devicesField->Menu()->FindItem(activeDevice.Location()))
+		devicesField->Menu()->FindItem(activeDevice.Location())->SetMarked(true);
 
     // Reported temperatures
-    criticalTempControl = new BTextControl("critical_temp", B_TRANSLATE("Critical:"), NULL, NULL);
+    criticalTempControl = new BTextControl("critical_temp", B_TRANSLATE("Critical"), NULL, NULL);
 	criticalTempControl->TextView()->MakeEditable(false);
 	criticalTempControl->SetModificationMessage(new BMessage(B_MODIFIERS_CHANGED));
 
-	currentTempControl = new BTextControl("current_temp", B_TRANSLATE("Current:"), NULL, NULL);
+	currentTempControl = new BTextControl("current_temp", B_TRANSLATE("Current"), NULL, NULL);
 	currentTempControl->TextView()->MakeEditable(false);
 	currentTempControl->SetModificationMessage(new BMessage(B_MODIFIERS_CHANGED));
 
@@ -73,6 +76,7 @@ MainWindow::MainWindow(BRect frame, DataFactory* dataRepo)
 	}
 
 	temperatureField = new BMenuField("temperature_options", "️", temperatureMenu);
+    temperatureField->SetExplicitSize(BSize(temperatureMenu->StringWidth("⚙️") * 4.0f, B_SIZE_UNSET));
 	for(int32 i = 0; i < SCALE_COUNT; i++) { // Initialize temperature scale in menu
 		auto scale = dataRepository->TemperatureScale();
 		temperatureField->Menu()->ItemAt(i)->SetMarked(scale == tempMenuItems[i].first);
@@ -80,9 +84,10 @@ MainWindow::MainWindow(BRect frame, DataFactory* dataRepo)
 
     // Layouting
     BLayoutBuilder::Group<>(this, B_VERTICAL)
-		.SetInsets(B_USE_WINDOW_INSETS)
+		.SetInsets(B_USE_SMALL_INSETS)
+		.Add(temperatureGraph)
 		.AddGrid()
-			.SetSpacing(B_USE_SMALL_SPACING, B_USE_SMALL_SPACING)
+			.SetSpacing(B_USE_HALF_ITEM_SPACING, B_USE_HALF_ITEM_SPACING)
 			.Add(devicesField->CreateLabelLayoutItem(), 0, 0)
 			.Add(devicesField->CreateMenuBarLayoutItem(), 1, 0, 4)
 			.Add(currentTempControl->CreateLabelLayoutItem(), 0, 1)
@@ -93,16 +98,21 @@ MainWindow::MainWindow(BRect frame, DataFactory* dataRepo)
 		.End()
 	.End();
 
-	ResizeToPreferred();
-
 	// Shortcuts
 	AddShortcut('1', B_COMMAND_KEY, new BMessage(B_ABOUT_REQUESTED));
 	AddShortcut(B_DELETE, B_COMMAND_KEY, new BMessage(M_RESTORE_DEFAULTS));
 
 	// Start live monitoring
-	tempUpdaterThread = spawn_thread(CallUpdateTemperature, "Temperature updater",
-		B_NORMAL_PRIORITY, this);
-	resume_thread(tempUpdaterThread);
+	if(HasDevice()) {
+		tempUpdaterThread = spawn_thread(CallUpdateTemperature, "Temperature updater",
+			B_NORMAL_PRIORITY, this);
+		resume_thread(tempUpdaterThread);
+	}
+
+	float rateMultiplier = static_cast<int64>(dataRepository->RefreshRate());
+	if(rateMultiplier < 1)
+		rateMultiplier = 1;
+	SetPulseRate(rateMultiplier * 1000000);
 }
 
 MainWindow::~MainWindow()
@@ -130,8 +140,9 @@ void MainWindow::MessageReceived(BMessage *msg)
 			alert->SetShortcut(0, B_ESCAPE);
 
 			if(alert->Go() == 1) {
-				dataRepository->Perform(static_cast<perform_code>(msg->what), NULL);
-				DeviceChanged(dataRepository->ThermalDevices().StringAt(0));
+				thread_id thread = spawn_thread(CallRestoreSettingsUI, "Restore ui",
+					B_NORMAL_PRIORITY, this);
+				resume_thread(thread);
 			}
 			break;
 		}
@@ -168,7 +179,20 @@ void MainWindow::MessageReceived(BMessage *msg)
 				msg->FindInt32("menu_item", &index);
 				for(int32 i = 0; i < SCALE_COUNT; i++)
 					temperatureField->Menu()->ItemAt(i)->SetMarked(i == index);
+
+				if(!msg->GetBool("changed_from_graph"))
+					PostMessage(msg, temperatureGraph);
 			}
+			break;
+		}
+		case M_TEMPERATURE_REQUESTED:
+		{
+			BMessage reply(M_TEMPERATURE_REPLY);
+			reply.AddFloat("temperature", activeDevice.ReadTemperature());
+
+			BMessenger messenger;
+			msg->FindMessenger("handler", &messenger);
+			msg->SendReply(&reply, messenger);
 			break;
 		}
 		case M_STARTED_RUNNING:
@@ -180,8 +204,13 @@ void MainWindow::MessageReceived(BMessage *msg)
 			uint32 rate = -1;
 			if(msg->FindUInt32("rate", 0, &rate) == B_OK) {
 				dataRepository->SetRefreshRate(rate);
-				SetPulseRate(dataRepository->RefreshRate() * 1000000);
+				SetPulseRate((bigtime_t)(dataRepository->RefreshRate() * 1000000));
 			}
+			break;
+		}
+		case M_GRAPHVIEW_COLOR_CHANGED:
+		{
+			PostMessage(msg, temperatureGraph);
 			break;
 		}
 		default:
@@ -201,9 +230,6 @@ void MainWindow::DeviceChanged(const char* devicePath)
 	if(!devicePath)
 		return;
 
-	// Update target
-	dataRepository->SetActiveDevice(devicePath);
-
 	// Wait for thread to end
 	if(tempUpdaterThread >= 0) {
 		shouldStopUpdater.store(true, std::memory_order_release);
@@ -211,6 +237,11 @@ void MainWindow::DeviceChanged(const char* devicePath)
 		wait_for_thread(tempUpdaterThread, &exitCode);
 		shouldStopUpdater.store(true, std::memory_order_release);
 	}
+
+	// Update target
+	dataRepository->SetActiveDevice(devicePath);
+	if(strcmp(activeDevice.Location(), dataRepository->ActiveDevice()) != 0)
+		activeDevice.SetTo(dataRepository->ActiveDevice());
 
 	// and restart updater
 	tempUpdaterThread = spawn_thread(CallUpdateTemperature, "Temperature updater",
@@ -220,7 +251,9 @@ void MainWindow::DeviceChanged(const char* devicePath)
 
 	// Update interface
 	LockLooper();
-	devicesField->Menu()->FindItem(devicePath)->SetMarked(true);
+	if(devicesField->Menu()->FindItem(dataRepository->ActiveDevice()))
+		devicesField->Menu()->FindItem(dataRepository->ActiveDevice())->SetMarked(true);
+    PostMessage(M_DEVICE_CHANGED, temperatureGraph);
 	UnlockLooper();
 }
 
@@ -240,11 +273,21 @@ void MainWindow::Update()
 {
 	PostMessage(M_STARTED_RUNNING);
 
-	while(!shouldStopUpdater.load(std::memory_order_acquire)) {
+	BString notAvailable(B_TRANSLATE_COMMENT("N/A",
+		"Abbreviated: when something is not available."));
+
+	if(!HasDevice()) {
 		Lock();
 
-		if(strcmp(activeDevice.Location(), dataRepository->ActiveDevice()) != 0)
-			activeDevice.SetTo(dataRepository->ActiveDevice());
+		currentTempControl->SetText(notAvailable);
+		criticalTempControl->SetText(notAvailable);
+
+		Unlock();
+		return;
+	}
+
+	while(!shouldStopUpdater.load(std::memory_order_acquire)) {
+		Lock();
 
 		auto scale = dataRepository->TemperatureScale();
 		float currentTemp = activeDevice.ReadTemperature(TEMPERATURE_CURRENT);
@@ -266,12 +309,12 @@ void MainWindow::Update()
 			criticalTempString.Append(SymbolForScale(scale, 1));
 		}
 		else
-			criticalTempString.SetTo(B_TRANSLATE_COMMENT("N/A",
-				"Abbreviated: when something is not available."));
+			criticalTempString.SetTo(notAvailable);
 		criticalTempControl->SetText(criticalTempString);
 
 		Unlock();
-		snooze(1000000);
+
+		snooze((bigtime_t)(dataRepository->RefreshRate() * 1000000));
 	}
 }
 
@@ -282,4 +325,41 @@ void MainWindow::CallNotifyStopped(void* data)
 	if(window) {
 		window->PostMessage(M_STOPPED_RUNNING);
 	}
+}
+
+bool MainWindow::HasDevice() const
+{
+	return
+		dataRepository->ActiveDevice() && // Valid path
+		strcmp(dataRepository->ActiveDevice(), activeDevice.Location()) == 0 && // Paths match
+		activeDevice.InitCheck() == B_OK; // Is initialized
+}
+
+/* static */
+status_t MainWindow::CallRestoreSettingsUI(void* data)
+{
+	MainWindow* window = (MainWindow*)data;
+	window->RestoreSettingsUI(NULL);
+	return 0;
+}
+
+void MainWindow::RestoreSettingsUI(BMessage *data)
+{
+	Lock();
+
+	// Wait for thread to end
+	if(tempUpdaterThread >= 0) {
+		shouldStopUpdater.store(true, std::memory_order_release);
+		status_t exitCode = B_OK;
+		wait_for_thread(tempUpdaterThread, &exitCode);
+		shouldStopUpdater.store(true, std::memory_order_release);
+	}
+
+	dataRepository->Perform(static_cast<perform_code>('rstr'), NULL);
+	if(dataRepository->ThermalDevices().CountStrings() > 0)
+		DeviceChanged(dataRepository->ThermalDevices().StringAt(0));
+
+	Unlock();
+
+	UpdateIfNeeded();
 }
